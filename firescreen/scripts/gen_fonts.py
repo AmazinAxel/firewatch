@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Convert Iosevka TTFs into Adafruit-GFX font headers
+(include/generated/fonts.h).
+
+The generated header is committed; rerun only to change sizes/weights.
+Run inside `nix develop` (provides freetype-py and $IOSEVKA_TTF_DIR):
+
+    python3 scripts/gen_fonts.py
+
+Conventions:
+- Glyph range is 0x20..0x7F. Slot 0x7F (DEL, never printed) holds the degree
+  sign; firmware writes '\\x7f' to render it (DEG_CH in render.cpp).
+- The two largest sizes only contain the characters needed for big numeric
+  readouts, keeping flash usage small; other slots are empty glyphs.
+- Sizes are freetype pixel em sizes (cap height is ~0.72 em for Iosevka).
+"""
+
+import argparse
+import os
+import sys
+
+import freetype
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = os.path.join(ROOT, "include", "generated", "fonts.h")
+
+BIG_CHARSET = set("0123456789-.?% °")
+
+# (c_name, ttf_basename, pixel_em, charset or None=full)
+SPECS = [
+    ("IosevkaR14", "Regular", 14, None),  # "updated" stamp
+    ("IosevkaR18", "Regular", 18, None),  # chart axis labels
+    ("IosevkaR28", "Regular", 28, None),  # forecast rows, pm labels, wind
+    ("IosevkaB28", "Bold", 28, None),     # H/L, forecast highs, AQI label min
+    ("IosevkaB36", "Bold", 36, None),     # AQI category label (mid size)
+    ("IosevkaB44", "Bold", 44, None),     # AQI category label, pm row values
+    ("IosevkaB64", "Bold", 64, BIG_CHARSET),    # current temp fallback
+    ("IosevkaB80", "Bold", 80, BIG_CHARSET),    # current temperature
+    ("IosevkaB112", "Bold", 112, BIG_CHARSET),  # giant AQI fallback
+    ("IosevkaB144", "Bold", 144, BIG_CHARSET),  # giant AQI number
+]
+
+FIRST, LAST = 0x20, 0x7F
+
+
+def build_font(face: freetype.Face, name: str, px: int, charset) -> str:
+    face.set_pixel_sizes(0, px)
+    bitmap_data = bytearray()
+    glyphs = []
+
+    face.load_char(" ", freetype.FT_LOAD_RENDER | freetype.FT_LOAD_TARGET_MONO)
+    space_adv = face.glyph.advance.x >> 6
+
+    for code in range(FIRST, LAST + 1):
+        ch = "°" if code == LAST else chr(code)
+        if charset is not None and ch not in charset:
+            glyphs.append((len(bitmap_data), 0, 0, space_adv, 0, 0, ch))
+            continue
+
+        face.load_char(ch, freetype.FT_LOAD_RENDER | freetype.FT_LOAD_TARGET_MONO)
+        g = face.glyph
+        bm = g.bitmap
+        offset = len(bitmap_data)
+
+        # Repack FT's row-padded mono bitmap into GFX's continuous bit stream.
+        bits = []
+        for y in range(bm.rows):
+            for x in range(bm.width):
+                byte = bm.buffer[y * bm.pitch + x // 8]
+                bits.append((byte >> (7 - x % 8)) & 1)
+        for i in range(0, len(bits), 8):
+            b = 0
+            for j, bit in enumerate(bits[i : i + 8]):
+                b |= bit << (7 - j)
+            bitmap_data.append(b)
+
+        glyphs.append(
+            (offset, bm.width, bm.rows, g.advance.x >> 6, g.bitmap_left,
+             -g.bitmap_top, ch)
+        )
+
+    y_advance = face.size.height >> 6
+
+    lines = [f"static const uint8_t {name}Bitmaps[] PROGMEM = {{"]
+    for i in range(0, len(bitmap_data), 16):
+        lines.append("    " + ", ".join(f"0x{b:02x}" for b in bitmap_data[i : i + 16]) + ",")
+    lines.append("};\n")
+
+    lines.append(f"static const GFXglyph {name}Glyphs[] PROGMEM = {{")
+    for off, w, h, adv, xo, yo, ch in glyphs:
+        label = "0x7f degree" if ch == "°" else repr(ch)
+        lines.append(f"    {{{off}, {w}, {h}, {adv}, {xo}, {yo}}},  // {label}")
+    lines.append("};\n")
+
+    lines.append(
+        f"static const GFXfont {name} PROGMEM = {{\n"
+        f"    (uint8_t*){name}Bitmaps, (GFXglyph*){name}Glyphs,"
+        f" 0x{FIRST:02x}, 0x{LAST:02x}, {y_advance}}};\n"
+    )
+    return "\n".join(lines)
+
+
+def find_ttf(fonts_dir: str, style: str) -> str:
+    # Accept Iosevka, IosevkaFixed, IosevkaTerm... first match wins.
+    candidates = sorted(
+        f for f in os.listdir(fonts_dir)
+        if f.lower().endswith(f"-{style.lower()}.ttf") and "italic" not in f.lower()
+        and f.lower().startswith("iosevka")
+    )
+    if not candidates:
+        sys.exit(f"no Iosevka *-{style}.ttf found in {fonts_dir}")
+    return os.path.join(fonts_dir, candidates[0])
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fonts-dir", default=os.environ.get("IOSEVKA_TTF_DIR"),
+                    help="directory containing Iosevka TTFs "
+                         "(default: $IOSEVKA_TTF_DIR, set by the dev shell)")
+    args = ap.parse_args()
+    if not args.fonts_dir:
+        ap.error("--fonts-dir required (or run inside `nix develop`)")
+
+    faces = {}
+    for style in {s[1] for s in SPECS}:
+        path = find_ttf(args.fonts_dir, style)
+        faces[style] = (freetype.Face(path), os.path.basename(path))
+
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, "w") as f:
+        f.write(
+            "// Generated by scripts/gen_fonts.py — do not edit.\n"
+            "// Source: "
+            + ", ".join(sorted({v[1] for v in faces.values()}))
+            + " (Iosevka, SIL OFL 1.1)\n"
+            "// Slot 0x7f holds the degree sign; see gen_fonts.py.\n"
+            "#pragma once\n\n#include <gfxfont.h>\n\n"
+        )
+        for name, style, px, charset in SPECS:
+            face, ttf = faces[style]
+            print(f"{name}: {ttf} @ {px}px")
+            f.write(build_font(face, name, px, charset) + "\n")
+
+    print(f"wrote {OUT}")
+
+
+if __name__ == "__main__":
+    main()

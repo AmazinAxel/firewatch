@@ -1,0 +1,17 @@
+# Secrets (WiFi credentials, API tokens) — see .env.example
+.env
+
+# PlatformIO
+.pio/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors
+.vscode/
+.idea/
+
+# Font/asset build intermediates (generated headers ARE committed)
+assets-build/
+tools/preview/out/
