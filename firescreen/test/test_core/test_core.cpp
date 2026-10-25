@@ -29,6 +29,11 @@ void test_aqi_pm10_breakpoints() {
   TEST_ASSERT_EQUAL(-1, aqi::fromPm10(9999.0f));
 }
 
+void test_aqi_between_table_rows() {
+  TEST_ASSERT_EQUAL(50, aqi::fromPm25(12.05f));
+  TEST_ASSERT_EQUAL(50, aqi::fromPm10(54.5f));
+}
+
 void test_aqi_sample_takes_max() {
   // pm10=200 -> AQI ~123 beats pm25=10 -> AQI ~42
   TEST_ASSERT_EQUAL(aqi::fromPm10(200.0f), aqi::fromSample(10.0f, 200.0f));
@@ -119,6 +124,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_aqi_pm25_breakpoints);
   RUN_TEST(test_aqi_pm10_breakpoints);
+  RUN_TEST(test_aqi_between_table_rows);
   RUN_TEST(test_aqi_sample_takes_max);
   RUN_TEST(test_aqi_labels);
   RUN_TEST(test_parser_basic_and_chunked);

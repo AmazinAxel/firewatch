@@ -35,8 +35,13 @@ int interpolate(float c, const Breakpoint (&table)[N]) {
 
 }  // namespace
 
-int fromPm25(float c) { return interpolate(c, kPm25); }
-int fromPm10(float c) { return interpolate(c, kPm10); }
+// EPA truncates before the lookup (pm2.5 to 0.1, pm10 to whole ug/m3), which
+// is what makes the tables gapless: 12.05 reads as 12.0, not a miss between
+// rows. The epsilon absorbs float error so 35.4f doesn't truncate to 35.3.
+int fromPm25(float c) {
+  return interpolate(std::floor(c * 10.0f + 1e-3f) / 10.0f, kPm25);
+}
+int fromPm10(float c) { return interpolate(std::floor(c + 1e-3f), kPm10); }
 
 int fromSample(float pm25, float pm10) {
   int a = fromPm25(pm25), b = fromPm10(pm10);

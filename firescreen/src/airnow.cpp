@@ -31,8 +31,12 @@ void fetch(GovAqi& gov) {
     return;
   }
 
+  // Only the AQI of each entry is used; skip storing the rest.
+  JsonDocument filter;
+  filter[0]["nowcastAQI"] = true;
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream());
+  DeserializationError err = deserializeJson(
+      doc, http.getStream(), DeserializationOption::Filter(filter));
   http.end();
   if (err || !doc.is<JsonArray>()) {
     Serial.println("airnow: bad json");

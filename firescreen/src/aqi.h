@@ -1,5 +1,7 @@
 // EPA AQI math and category labels, ported 1:1 from the homelab webserver
-// (flake/hosts/alechomelab/webserver/page.html) so device and web page agree.
+// (flake/hosts/alechomelab/webserver/page.html) so device and web page agree --
+// except that this side truncates concentrations first, as EPA specifies, so a
+// value between two table rows (12.05) is not a miss. The page has that gap.
 // Pure C++ (no Arduino deps) so it is unit-testable on the host.
 #pragma once
 
